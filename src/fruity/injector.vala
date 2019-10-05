@@ -569,7 +569,7 @@ namespace Frida.Fruity.Injector {
 
 			uint64 input_vector_address = state + input_vector_offset;
 			uint64 output_vector_address = state + output_vector_offset;
-			uint64 caller_module = code;
+			uint64 caller_module = executable_base;
 			// yield lldb.enumerate_modules (module => {
 			// 	if (module.pathname == "/System/Library/Frameworks/Foundation.framework/Foundation") {
 			// 		printerr ("PRETENDING IT IS FOUNDATION\n");
@@ -719,6 +719,7 @@ namespace Frida.Fruity.Injector {
 			0xaa1503e2U, // mov x2, x21 (caller_module)
 			//0xd63f0260U, // blr x19 (dlopen)
 			0x92800020U, // mov x0, -2 (RTLD_DEFAULT)
+			//0x92800000U, // mov x0, #-0x1 (RTLD_NEXT)
 			0xaa0003f8U, // mov x24, x0
 			0x910022d6U, // add x22, x22, #0x8 (input_vector++)
 			0xb40001a0U, // cbz x0, skip_next_symbol
