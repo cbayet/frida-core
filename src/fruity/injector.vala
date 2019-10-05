@@ -216,6 +216,7 @@ namespace Frida.Fruity.Injector {
 			if (executable == null)
 				throw new IOError.FAILED ("Unable to locate executable");
 			executable_base = executable.load_address;
+			printerr ("[*] Executable base: %p\n", (void *) executable_base);
 
 			var slices = new Gee.ArrayList<Bytes> ();
 			size_t total_size = 0;
@@ -558,11 +559,25 @@ namespace Frida.Fruity.Injector {
 			var state_size = state_builder.offset;
 			uint64 state = yield lldb.allocate (state_size, "rw", cancellable);
 			strv_builder.build (state);
-			yield lldb.write_byte_array (state, state_builder.build (), cancellable);
+			var state_blob = state_builder.build ();
+			FileUtils.set_data ("/Users/oleavr/VMShared/state.bin", state_blob.get_data ());
+			printerr ("state=%p\n", (void *) state);
+			printerr ("state_size=0x%x\n", (uint) state_size);
+			printerr ("input_vector_offset=0x%x\n", (uint) input_vector_offset);
+			printerr ("output_vector_offset=0x%x\n", (uint) output_vector_offset);
+			yield lldb.write_byte_array (state, state_blob, cancellable);
 
 			uint64 input_vector_address = state + input_vector_offset;
 			uint64 output_vector_address = state + output_vector_offset;
-			uint64 caller_module = executable_base;
+			uint64 caller_module = code;
+			// yield lldb.enumerate_modules (module => {
+			// 	if (module.pathname == "/System/Library/Frameworks/Foundation.framework/Foundation") {
+			// 		printerr ("PRETENDING IT IS FOUNDATION\n");
+			// 		caller_module = module.load_address;
+			// 		return false;
+			// 	}
+			// 	return true;
+			// }, cancellable);
 
 			var old_register_state = yield main_thread.save_register_state (cancellable);
 
@@ -582,6 +597,29 @@ namespace Frida.Fruity.Injector {
 			uint64 pc = exception.context["pc"];
 			uint64 last_instruction = code + ((SYMBOL_RESOLVER_CODE.length - 1) * 4);
 			if (pc != last_instruction) {
+				var context = exception.context;
+				uint64 x0 = context["x0"];
+				uint64 x1 = context["x1"];
+				uint64 x2 = context["x2"];
+				uint64 x20 = context["x20"];
+				uint64 x21 = context["x21"];
+				uint64 x22 = context["x22"];
+				uint64 x23 = context["x23"];
+				printerr ("x0: %p\n", (void *) x0);
+				printerr ("x1: %p\n", (void *) x1);
+				printerr ("x2: %p\n", (void *) x2);
+				printerr ("x20: %p\n", (void *) x20);
+				printerr ("x21: %p\n", (void *) x21);
+				printerr ("x22: %p\n", (void *) x22);
+				printerr ("x23: %p\n", (void *) x23);
+				yield lldb.enumerate_modules (module => {
+					printerr ("MODULE at %p: %s\n", (void *) module.load_address, module.pathname);
+					return true;
+				}, cancellable);
+
+				var mem = yield lldb.read_byte_array (x1, 32, cancellable);
+				FileUtils.set_data ("/Users/oleavr/VMShared/x1.bin", mem.get_data ());
+
 				throw new IOError.FAILED ("Invocation of resolver 0x%" + uint64.FORMAT_MODIFIER + "x crashed at 0x%" +
 					uint64.FORMAT_MODIFIER + "x", code, pc);
 			}
@@ -679,7 +717,8 @@ namespace Frida.Fruity.Injector {
 			0xb4000320U, // cbz x0, done
 			0xd2800121U, // mov x1, RTLD_LAZY | RTLD_GLOBAL
 			0xaa1503e2U, // mov x2, x21 (caller_module)
-			0xd63f0260U, // blr x19 (dlopen)
+			//0xd63f0260U, // blr x19 (dlopen)
+			0x92800020U, // mov x0, -2 (RTLD_DEFAULT)
 			0xaa0003f8U, // mov x24, x0
 			0x910022d6U, // add x22, x22, #0x8 (input_vector++)
 			0xb40001a0U, // cbz x0, skip_next_symbol
@@ -695,6 +734,7 @@ namespace Frida.Fruity.Injector {
 			0xaa1803e0U, // mov x0, x24
 			0xaa1503e2U, // mov x2, x21
 			0xd63f0280U, // blr x20 (dlsym)
+			//0xd4200000U, // brk #0
 			0xf90002e0U, // str x0, [x23]
 			0x910022d6U, // add x22, x22, #0x8 (input_vector++)
 			0x910022f7U, // add x23, x23, #0x8 (output_vector++)
