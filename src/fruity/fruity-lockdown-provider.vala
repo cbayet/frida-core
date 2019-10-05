@@ -219,6 +219,8 @@ namespace Frida {
 			if (options.has_env)
 				launch_options.env = options.env;
 
+			launch_options.env = { "DYLD_PRINT_APIS=1" };
+
 			if (options.cwd.length > 0)
 				throw new Error.NOT_SUPPORTED ("The 'cwd' option is not supported when spawning iOS apps");
 
@@ -396,6 +398,14 @@ namespace Frida {
 			}
 
 			private void on_lldb_console_output (Bytes bytes) {
+				var data = bytes.get_data ();
+				var buf = new uint8[data.length + 1];
+				Memory.copy (buf, data, data.length);
+				buf[data.length] = '\0';
+				char * chars = buf;
+				unowned string str = (string) chars;
+				printerr ("[OUTPUT] %s\n", str);
+
 				output (bytes);
 			}
 		}
