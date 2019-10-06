@@ -37,8 +37,8 @@ namespace Frida.Fruity.Injector {
 
 		private uint64 dyld_base;
 		private Gee.HashMap<string, uint64?> dyld_symbols;
-		private uint64 dlopen;
-		private uint64 dlsym;
+		private uint64 dyld_dlopen;
+		private uint64 dyld_dlsym;
 
 		private uint64 executable_base;
 
@@ -144,16 +144,15 @@ namespace Frida.Fruity.Injector {
 
 			Gum.FoundDarwinBindFunc perform_bind = bind => {
 				unowned string module_name = module.get_dependency_by_ordinal (bind.library_ordinal);
+				unowned string symbol_name = bind.symbol_name;
 
-				uint64 address = symbols[module_name][bind.symbol_name];
+				uint64 address = symbols[module_name][symbol_name];
 				if (address == 0) {
 					bool is_weak = (bind.symbol_flags & Gum.DarwinBindSymbolFlags.WEAK_IMPORT) != 0;
-					if (is_weak)
+					if (is_weak || is_dyld_stub_binder (module_name, symbol_name))
 						return true;
-					printerr ("WARNING: Unable to resolve symbol: %s\n", bind.symbol_name);
-					return true;
-					// pending_error = new IOError.FAILED ("Unable to resolve symbol: %s", bind.symbol_name);
-					// return false;
+					pending_error = new IOError.FAILED ("Unable to resolve symbol: %s", bind.symbol_name);
+					return false;
 				}
 
 				buffer.write_pointer ((size_t) (bind.segment.file_offset + bind.offset), address + bind.addend);
@@ -166,6 +165,10 @@ namespace Frida.Fruity.Injector {
 			module.enumerate_lazy_binds (perform_bind);
 			if (pending_error != null)
 				throw pending_error;
+		}
+
+		private static bool is_dyld_stub_binder (string module_name, string symbol_name) {
+			return module_name == "/usr/lib/libSystem.B.dylib" && symbol_name == "dyld_stub_binder";
 		}
 
 		private size_t compute_footprint_size (Gum.DarwinModule module) {
@@ -259,10 +262,10 @@ namespace Frida.Fruity.Injector {
 				return true;
 			});
 
-			dlopen = dyld_symbols.has_key ("_dlopen")
+			dyld_dlopen = dyld_symbols.has_key ("_dlopen")
 				? resolve_dyld_symbol ("_dlopen", "dlopen")
 				: resolve_dyld_symbol ("_dlopen_internal", "dlopen");
-			dlsym = dyld_symbols.has_key ("_dlsym")
+			dyld_dlsym = dyld_symbols.has_key ("_dlsym")
 				? resolve_dyld_symbol ("_dlsym", "dlsym")
 				: resolve_dyld_symbol ("_dlsym_internal", "dlsym");
 		}
@@ -318,6 +321,8 @@ namespace Frida.Fruity.Injector {
 
 		private async void initialize_libsystem_from_modern_codepath (uint64 launch_with_closure, Cancellable? cancellable)
 				throws GLib.Error {
+			printerr ("[*] Initializing libSystem from modern codepath\n");
+
 			uint64 run_initializers_call = yield find_dyld3_run_initializers_call (launch_with_closure, cancellable);
 
 			var run_initializers_breakpoint = yield lldb.add_breakpoint (run_initializers_call, cancellable);
@@ -361,6 +366,8 @@ namespace Frida.Fruity.Injector {
 		}
 
 		private async void initialize_libsystem_from_legacy_codepath (Cancellable? cancellable) throws GLib.Error {
+			printerr ("[*] Initializing libSystem from legacy codepath\n");
+
 			uint64 code = yield lldb.allocate (page_size, "rx", cancellable);
 
 			var code_builder = lldb.make_buffer_builder ();
@@ -422,7 +429,7 @@ namespace Frida.Fruity.Injector {
 			*/
 			ExceptionHandler? strcmp_handler = null;
 
-			yield invoke_remote_function (dlopen, { libsystem_string, 9, 0 }, strcmp_handler, cancellable);
+			yield invoke_remote_function (dyld_dlopen, { libsystem_string, 9, 0 }, strcmp_handler, cancellable);
 
 			/*
 			yield strcmp_breakpoint.remove (cancellable);
@@ -559,25 +566,25 @@ namespace Frida.Fruity.Injector {
 			var state_size = state_builder.offset;
 			uint64 state = yield lldb.allocate (state_size, "rw", cancellable);
 			strv_builder.build (state);
-			var state_blob = state_builder.build ();
-			FileUtils.set_data ("/Users/oleavr/VMShared/state.bin", state_blob.get_data ());
-			printerr ("state=%p\n", (void *) state);
-			printerr ("state_size=0x%x\n", (uint) state_size);
-			printerr ("input_vector_offset=0x%x\n", (uint) input_vector_offset);
-			printerr ("output_vector_offset=0x%x\n", (uint) output_vector_offset);
-			yield lldb.write_byte_array (state, state_blob, cancellable);
+			yield lldb.write_byte_array (state, state_builder.build (), cancellable);
 
 			uint64 input_vector_address = state + input_vector_offset;
 			uint64 output_vector_address = state + output_vector_offset;
 			uint64 caller_module = executable_base;
-			// yield lldb.enumerate_modules (module => {
-			// 	if (module.pathname == "/System/Library/Frameworks/Foundation.framework/Foundation") {
-			// 		printerr ("PRETENDING IT IS FOUNDATION\n");
-			// 		caller_module = module.load_address;
-			// 		return false;
-			// 	}
-			// 	return true;
-			// }, cancellable);
+
+			uint64 libdyld_dlopen = 0;
+			uint64 libdyld_dlsym = 0;
+			var timer = new Timer ();
+			yield lldb.enumerate_modules (module => {
+				if (module.pathname == "/usr/lib/system/libdyld.dylib") {
+					// FIXME: parse exports
+					libdyld_dlopen = module.load_address + 0x53ac;
+					libdyld_dlsym = module.load_address + 0x5574;
+					return false;
+				}
+				return true;
+			}, cancellable);
+			printerr ("[*] Reprobed modules in %u ms\n", (uint) (timer.elapsed () * 1000.0));
 
 			var old_register_state = yield main_thread.save_register_state (cancellable);
 
@@ -587,8 +594,8 @@ namespace Frida.Fruity.Injector {
 			yield main_thread.write_register ("pc", code, cancellable);
 			yield main_thread.write_register ("lr", 1337, cancellable);
 
-			yield main_thread.write_register ("x19", dlopen, cancellable);
-			yield main_thread.write_register ("x20", dlsym, cancellable);
+			yield main_thread.write_register ("x19", libdyld_dlopen, cancellable);
+			yield main_thread.write_register ("x20", libdyld_dlsym, cancellable);
 			yield main_thread.write_register ("x21", caller_module, cancellable);
 			yield main_thread.write_register ("x22", input_vector_address, cancellable);
 			yield main_thread.write_register ("x23", output_vector_address, cancellable);
@@ -597,29 +604,6 @@ namespace Frida.Fruity.Injector {
 			uint64 pc = exception.context["pc"];
 			uint64 last_instruction = code + ((SYMBOL_RESOLVER_CODE.length - 1) * 4);
 			if (pc != last_instruction) {
-				var context = exception.context;
-				uint64 x0 = context["x0"];
-				uint64 x1 = context["x1"];
-				uint64 x2 = context["x2"];
-				uint64 x20 = context["x20"];
-				uint64 x21 = context["x21"];
-				uint64 x22 = context["x22"];
-				uint64 x23 = context["x23"];
-				printerr ("x0: %p\n", (void *) x0);
-				printerr ("x1: %p\n", (void *) x1);
-				printerr ("x2: %p\n", (void *) x2);
-				printerr ("x20: %p\n", (void *) x20);
-				printerr ("x21: %p\n", (void *) x21);
-				printerr ("x22: %p\n", (void *) x22);
-				printerr ("x23: %p\n", (void *) x23);
-				yield lldb.enumerate_modules (module => {
-					printerr ("MODULE at %p: %s\n", (void *) module.load_address, module.pathname);
-					return true;
-				}, cancellable);
-
-				var mem = yield lldb.read_byte_array (x1, 32, cancellable);
-				FileUtils.set_data ("/Users/oleavr/VMShared/x1.bin", mem.get_data ());
-
 				throw new IOError.FAILED ("Invocation of resolver 0x%" + uint64.FORMAT_MODIFIER + "x crashed at 0x%" +
 					uint64.FORMAT_MODIFIER + "x", code, pc);
 			}
@@ -717,9 +701,7 @@ namespace Frida.Fruity.Injector {
 			0xb4000320U, // cbz x0, done
 			0xd2800121U, // mov x1, RTLD_LAZY | RTLD_GLOBAL
 			0xaa1503e2U, // mov x2, x21 (caller_module)
-			//0xd63f0260U, // blr x19 (dlopen)
-			0x92800020U, // mov x0, -2 (RTLD_DEFAULT)
-			//0x92800000U, // mov x0, #-0x1 (RTLD_NEXT)
+			0xd63f0260U, // blr x19 (dlopen)
 			0xaa0003f8U, // mov x24, x0
 			0x910022d6U, // add x22, x22, #0x8 (input_vector++)
 			0xb40001a0U, // cbz x0, skip_next_symbol
@@ -735,7 +717,6 @@ namespace Frida.Fruity.Injector {
 			0xaa1803e0U, // mov x0, x24
 			0xaa1503e2U, // mov x2, x21
 			0xd63f0280U, // blr x20 (dlsym)
-			//0xd4200000U, // brk #0
 			0xf90002e0U, // str x0, [x23]
 			0x910022d6U, // add x22, x22, #0x8 (input_vector++)
 			0x910022f7U, // add x23, x23, #0x8 (output_vector++)

@@ -219,7 +219,7 @@ namespace Frida {
 			if (options.has_env)
 				launch_options.env = options.env;
 
-			launch_options.env = { "DYLD_PRINT_APIS=1" };
+			// launch_options.env = { "DYLD_PRINT_APIS=1", "DYLD_PRINT_WARNINGS=1" };
 
 			if (options.cwd.length > 0)
 				throw new Error.NOT_SUPPORTED ("The 'cwd' option is not supported when spawning iOS apps");
