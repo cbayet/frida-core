@@ -41,8 +41,6 @@ namespace Frida.Fruity.Injector {
 		private uint64 dyld_dlopen;
 		private uint64 dyld_dlsym;
 
-		private uint64 executable_base;
-
 		public Session (Gum.DarwinModule module, LLDB.Client lldb) {
 			Object (module: module, lldb: lldb);
 		}
@@ -193,7 +191,6 @@ namespace Frida.Fruity.Injector {
 			dyld_symbols = new Gee.HashMap<string, uint64?> ();
 
 			LLDB.Module? dyld = null;
-			LLDB.Module? executable = null;
 			uint64 slide = 0;
 			yield lldb.enumerate_modules (module => {
 				printerr ("%s\n", module.pathname);
@@ -217,11 +214,6 @@ namespace Frida.Fruity.Injector {
 			if (dyld == null)
 				throw new IOError.FAILED ("Unable to locate dyld");
 			dyld_base = dyld.load_address;
-
-			if (executable == null)
-				throw new IOError.FAILED ("Unable to locate executable");
-			executable_base = executable.load_address;
-			printerr ("[*] Executable base: %p\n", (void *) executable_base);
 
 			var slices = new Gee.ArrayList<Bytes> ();
 			size_t total_size = 0;

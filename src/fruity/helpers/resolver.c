@@ -24,9 +24,7 @@ uint64_t frida_read_uleb128 (const uint8_t ** data);
 static bool frida_str_equals (const char * str, const char * other);
 
 void
-frida_resolve_symbols (const char ** input_vector,
-                       void ** output_vector,
-                       const struct dyld_all_image_infos * all_image_info)
+frida_resolve_symbols (const char ** input_vector, void ** output_vector, const struct dyld_all_image_infos * all_image_info)
 {
   FridaLibdyldApi api;
   const char ** input;

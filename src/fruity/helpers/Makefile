@@ -3,12 +3,25 @@ ios_cc := $(shell xcrun --sdk iphoneos -f clang)
 cflags := -Wall -pipe -Oz -g
 ldflags := -Wl,-dead_strip
 
-build: build/resolver build/resolver.dylib
+build: build/fetcher.dylib build/resolver.dylib build/test-fetcher build/test-resolver
 
 test: build
-	@build/resolver
+	@build/test-fetcher
+	@build/test-resolver
 
-build/resolver: resolver.c
+build/%.dylib: %.c
+	@mkdir -p $(@D)
+	$(ios_cc) \
+		-isysroot $(shell xcrun --sdk iphoneos --show-sdk-path) \
+		-arch arm64 \
+		$(cflags) \
+		$< \
+		-o $@ \
+		-dynamiclib \
+		-nostdlib \
+		$(ldflags)
+
+build/test-%: %.c
 	@mkdir -p $(@D)
 	$(macos_cc) \
 		-isysroot $(shell xcrun --sdk macosx --show-sdk-path) \
@@ -16,19 +29,7 @@ build/resolver: resolver.c
 		$(cflags) \
 		-DBUILDING_TEST_PROGRAM \
 		$< \
-		-o build/resolver \
-		$(ldflags)
-
-build/resolver.dylib: resolver.c
-	@mkdir -p $(@D)
-	$(ios_cc) \
-		-isysroot $(shell xcrun --sdk iphoneos --show-sdk-path) \
-		-arch arm64 \
-		$(cflags) \
-		$< \
-		-o build/resolver.dylib \
-		-dynamiclib \
-		-nostdlib \
+		-o $@ \
 		$(ldflags)
 
 .PHONY: build test
