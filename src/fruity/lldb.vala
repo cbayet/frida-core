@@ -568,7 +568,7 @@ namespace Frida.LLDB {
 			uint64 notification_callback = info_address + 4 + 4 + pointer_size;
 			uint64 libsystem_initialized = notification_callback + pointer_size + 1;
 
-			return new AppleDyldFields (notification_callback, libsystem_initialized);
+			return new AppleDyldFields (info_address, notification_callback, libsystem_initialized);
 		}
 
 		private async Process get_process_info (Cancellable? cancellable = null) throws Error, IOError {
@@ -1793,6 +1793,11 @@ namespace Frida.LLDB {
 	}
 
 	public class AppleDyldFields : Object {
+		public uint64 all_image_info {
+			get;
+			construct;
+		}
+
 		public uint64 notification_callback {
 			get;
 			construct;
@@ -1803,8 +1808,9 @@ namespace Frida.LLDB {
 			construct;
 		}
 
-		public AppleDyldFields (uint64 notification_callback, uint64 libsystem_initialized) {
+		public AppleDyldFields (uint64 all_image_info, uint64 notification_callback, uint64 libsystem_initialized) {
 			Object (
+				all_image_info: all_image_info,
 				notification_callback: notification_callback,
 				libsystem_initialized: libsystem_initialized
 			);

@@ -5,7 +5,7 @@ ldflags := -Wl,-dead_strip
 
 build: build/resolver build/resolver.dylib
 
-test: build/resolver
+test: build
 	@build/resolver
 
 build/resolver: resolver.c
